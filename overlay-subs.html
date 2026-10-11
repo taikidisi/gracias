@@ -157,7 +157,14 @@ function nombreDe(userstate, claveDisplay, fallback) {
   return (userstate && userstate[claveDisplay]) || fallback;
 }
 
-const client = new tmi.Client({ channels: [CANAL] });
+// si la librería de Twitch no carga, el overlay igual funciona (modo prueba incluido)
+let client;
+if (typeof tmi !== 'undefined') {
+  client = new tmi.Client({ channels: [CANAL] });
+} else {
+  console.error('No se pudo cargar tmi.js: el overlay no va a leer el chat de Twitch.');
+  client = { on() {}, connect() { return Promise.resolve(); } };
+}
 
 // sub nueva
 client.on('subscription', (ch, user, method, msg, us) => {
