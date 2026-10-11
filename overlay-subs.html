@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Overlay Gracias Subs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/tmi.js@1.8.5/dist/tmi.min.js"></script>
+<style>
+  :root {
+    --verde: #c6f432;
+    --contorno: #1d3300;
+    --tam: 36px;
+  }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: transparent;   /* fondo transparente para OBS */
+    overflow: hidden;
+  }
+  body {
+    font-family: "Fredoka", "Baloo 2", "Nunito", sans-serif;
+    font-weight: 600;
+    color: var(--verde);
+    font-size: var(--tam);
+    line-height: 1.15;
+    padding: 12px 16px;
+    box-sizing: border-box;
+  }
+  /* contorno oscuro + sombra suave */
+  h1, li {
+    text-shadow:
+      -2px -2px 0 var(--contorno), 2px -2px 0 var(--contorno),
+      -2px  2px 0 var(--contorno), 2px  2px 0 var(--contorno),
+       0 -2px 0 var(--contorno), 0 2px 0 var(--contorno),
+      -2px 0 0 var(--contorno), 2px 0 0 var(--contorno),
+       0 3px 6px rgba(0,0,0,.45);
+  }
+  h1 {
+    margin: 0 0 6px;
+    font-size: 1em;
+    font-weight: 600;
+  }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li {
+    white-space: nowrap;
+    animation: entra .45s ease-out;
+  }
+  li .estrella { margin-right: .15em; }
+  li .regalo { margin-left: .2em; font-size: .85em; text-shadow: none; }
+  @keyframes entra {
+    from { opacity: 0; transform: translateX(-24px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+</style>
+</head>
+<body>
+  <h1 id="titulo">Gracias subs &lt;3</h1>
+  <ul id="lista"></ul>
+
+<script>
+/* ===== Configuración (también se puede cambiar por URL) =====
+   ?canal=taiki_02        canal de Twitch a leer
+   ?titulo=Gracias subs   texto del título
+   ?horas=8               si pasan más de estas horas sin subs, la lista se reinicia (nuevo stream)
+   ?comando=!resetsubs    comando para reiniciar a mano (solo streamer y mods)
+   ?test=1                agrega subs de prueba para ver cómo queda
+*/
+const params  = new URLSearchParams(location.search);
+const CANAL   = (params.get('canal') || 'taiki_02').toLowerCase().replace('#','');
+const TITULO  = params.get('titulo') || 'Gracias subs <3';
+const HORAS   = parseFloat(params.get('horas') || '8');
+const COMANDO = (params.get('comando') || '!resetsubs').toLowerCase();
+const TEST    = params.get('test') === '1';
+
+const KEY = 'overlay_subs_' + CANAL;
+const lista  = document.getElementById('lista');
+const titulo = document.getElementById('titulo');
+titulo.textContent = TITULO;
+
+let subs = [];          // [{n: 'Nombre', g: true|false}]
+let ultimaSub = 0;
+
+/* ----- guardado en el navegador de OBS (por si recargás la fuente) ----- */
+function guardar() {
+  try { localStorage.setItem(KEY, JSON.stringify({ subs, ultimaSub })); } catch (e) {}
+}
+function cargar() {
+  try {
+    const d = JSON.parse(localStorage.getItem(KEY) || 'null');
+    if (!d) return;
+    // si pasó mucho tiempo desde la última sub, se considera otro stream
+    if (Date.now() - d.ultimaSub > HORAS * 3600 * 1000) return;
+    subs = d.subs || [];
+    ultimaSub = d.ultimaSub || 0;
+  } catch (e) {}
+}
+
+/* ----- dibujar ----- */
+function render() {
+  lista.innerHTML = '';
+  subs.forEach(s => {
+    const li = document.createElement('li');
+    const est = document.createElement('span');
+    est.className = 'estrella';
+    est.textContent = '☆';
+    li.appendChild(est);
+    li.appendChild(document.createTextNode(s.n));
+    if (s.g) {
+      const r = document.createElement('span');
+      r.className = 'regalo';
+      r.textContent = '🎁';
+      li.appendChild(r);
+    }
+    lista.appendChild(li);
+  });
+  ajustar();
+}
+
+/* achica la letra si la lista ya no entra en la pantalla */
+function ajustar() {
+  let tam = 36;
+  document.body.style.setProperty('--tam', tam + 'px');
+  while (document.body.scrollHeight > window.innerHeight && tam > 14) {
+    tam -= 1;
+    document.body.style.setProperty('--tam', tam + 'px');
+  }
+}
+window.addEventListener('resize', ajustar);
+
+/* ----- agregar sub ----- */
+function agregar(nombre, regalada) {
+  if (!nombre) return;
+  // si pasó mucho desde la última sub, arranca lista nueva
+  if (ultimaSub && Date.now() - ultimaSub > HORAS * 3600 * 1000) subs = [];
+  const existente = subs.find(s => s.n.toLowerCase() === nombre.toLowerCase());
+  if (existente) {
+    if (regalada && !existente.g) { existente.g = true; ultimaSub = Date.now(); guardar(); render(); }
+    return;
+  }
+  subs.push({ n: nombre, g: !!regalada });
+  ultimaSub = Date.now();
+  guardar();
+  render();
+}
+
+function reiniciar() {
+  subs = [];
+  ultimaSub = 0;
+  guardar();
+  render();
+}
+
+/* ----- Twitch (chat, sin login) ----- */
+function nombreDe(userstate, claveDisplay, fallback) {
+  return (userstate && userstate[claveDisplay]) || fallback;
+}
+
+const client = new tmi.Client({ channels: [CANAL] });
+
+// sub nueva
+client.on('subscription', (ch, user, method, msg, us) => {
+  agregar(nombreDe(us, 'display-name', user), false);
+});
+
+// resub
+client.on('resub', (ch, user, months, msg, us) => {
+  agregar(nombreDe(us, 'display-name', user), false);
+});
+
+// sub regalada: el 🎁 va en quien la recibe
+client.on('subgift', (ch, gifter, streak, recipient, methods, us) => {
+  agregar(nombreDe(us, 'msg-param-recipient-display-name', recipient), true);
+});
+client.on('anonsubgift', (ch, streak, recipient, methods, us) => {
+  agregar(nombreDe(us, 'msg-param-recipient-display-name', recipient), true);
+});
+
+// reinicio manual por chat (solo streamer o mods)
+client.on('message', (ch, tags, message) => {
+  if (message.trim().toLowerCase() !== COMANDO) return;
+  const esMod = tags.mod || (tags.badges && tags.badges.broadcaster);
+  if (esMod) reiniciar();
+});
+
+cargar();
+render();
+client.connect().catch(console.error);
+
+/* ----- modo prueba ----- */
+if (TEST) {
+  reiniciar();
+  const prueba = [['Belb0120',0],['Sancor',0],['Vinlarii',0],['Serenkai',1],['Borealisblau',0],
+                  ['Merquitaaa',1],['Brunitomp1',0],['Lord_siesta',0],['Hanya_tatts',1]];
+  prueba.forEach((p, i) => setTimeout(() => agregar(p[0], !!p[1]), 600 * (i + 1)));
+}
+</script>
+</body>
+</html>
